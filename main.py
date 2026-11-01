@@ -17,6 +17,7 @@ def setup_argparse():
     """
     parser = argparse.ArgumentParser(description='Lightweight Open Port Scanner focused on vulnerable services.')
     parser.add_argument('target', help='Target host or IP address to scan.')
+    # The default is the module level list itself, shared as one object. Nothing here mutates it, but any future code that sorted or trimmed the parsed ports in place would rewrite the defaults for every later run in the same process.
     parser.add_argument('-p', '--ports', nargs='+', type=int, help='Specify a list of ports to scan. Defaults to common vulnerable ports.', default=COMMON_PORTS)
     parser.add_argument('-t', '--threads', type=int, help='Number of threads to use for scanning (default: 10)', default=10)
     parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output for debugging.')
@@ -48,6 +49,7 @@ def is_valid_hostname(hostname):
     """
     if len(hostname) > 255:
         return False
+    # An empty target would raise IndexError on this line instead of returning False. The command line requires an argument, so only a caller importing this function can reach that, but the check bills itself as a validator and a validator should not crash on the input it exists to reject.
     if hostname[-1] == ".":
         hostname = hostname[:-1] # strip exactly one dot from the right, if present
     allowed = re.compile(r"(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
@@ -70,14 +72,17 @@ def scan_port(target, port, verbose=False):
         # Create a socket object
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(1)  # Set a timeout of 1 second
+        # One second is short on a lossy or far away link. A slow SYN ACK turns an open port into a closed result, and nothing retries, so the scan is at its least accurate exactly on the networks where a person would most want care.
         
         # Attempt to connect to the target and port
+        # connect_ex folds every failure into a nonzero code, and the branch below calls all of them closed. A filtered port where the probe was dropped and a refused port where the host answered at once read exactly the same here, so closed in this output means not open, nothing finer.
         result = sock.connect_ex((target, port))
         
         if result == 0:
             logging.info(f"Port {port} is open on {target}")
             if verbose:
                 try:
+                    # The service name comes from the local services table for the port number, not from anything the target said. A web server living on 3306 would be reported as MySQL here, because the name is a guess from the number alone.
                     service_name = socket.getservbyport(port)
                     logging.info(f"Service: {service_name}")
                 except socket.error:
@@ -134,6 +139,7 @@ def main():
     # Resolve once up front so an unresolvable target fails as a scan
     # failure instead of one error per port and a clean completion line.
     try:
+        # Resolving once and scanning the address is the right order, and it pins the scan to one address. A host with several addresses, or a round robin name, is only ever tested on the first one the resolver hands back, so an open port on a sibling address is invisible.
         resolved = socket.gethostbyname(target)
     except socket.gaierror:
         logging.error(f"Scan failed: could not resolve hostname for {target}")
@@ -147,6 +153,7 @@ def main():
         with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
             futures = [executor.submit(scan_port, resolved, port, verbose) for port in ports]
             for future in concurrent.futures.as_completed(futures):
+                # result() is called twice for every future in this line. It returns the same value both times, so the count is right, but the shape invites a future edit where the two calls disagree, and a plain local variable would remove the question.
                 counts[future.result()] = counts.get(future.result(), 0) + 1
 
     except KeyboardInterrupt:
