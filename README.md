@@ -15,3 +15,6 @@ Performs a quick scan of common open ports on a target host or network, specific
 
 ## License
 Copyright (c) ShadowStrikeHQ
+
+## Behaviour notes
+The -v flag sets the log level to DEBUG, so closed port lines appear. The target is resolved once before scanning; a target that cannot be resolved prints a scan failed line and exits non-zero. Every completed scan ends with a summary count of open, closed, and errored ports.

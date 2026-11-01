@@ -1,4 +1,5 @@
 import argparse
+import re
 import socket
 import logging
 import sys
@@ -63,7 +64,7 @@ def scan_port(target, port, verbose=False):
         verbose (bool): Enable verbose output.
 
     Returns:
-        bool: True if the port is open, False otherwise.
+        str: "open", "closed", or "error".
     """
     try:
         # Create a socket object
@@ -83,22 +84,21 @@ def scan_port(target, port, verbose=False):
                     logging.info("Service name not found.")
 
             sock.close()
-            return True
+            return "open"
         else:
-            if verbose:
-                logging.debug(f"Port {port} is closed on {target}")
+            logging.debug(f"Port {port} is closed on {target}")
             sock.close()
-            return False
+            return "closed"
 
     except socket.gaierror:
         logging.error(f"Could not resolve hostname for {target}")
-        return False
+        return "error"
     except socket.error as e:
         logging.error(f"Socket error: {e}")
-        return False
+        return "error"
     except Exception as e:
         logging.error(f"An unexpected error occurred: {e}")
-        return False
+        return "error"
 
 
 def main():
@@ -127,16 +127,28 @@ def main():
         logging.error("Number of threads must be greater than 0.")
         sys.exit(1)
     
-    logging.info(f"Starting scan on {target} with {threads} threads...")
+    if verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+        logging.debug("Verbose mode enabled.")
 
+    # Resolve once up front so an unresolvable target fails as a scan
+    # failure instead of one error per port and a clean completion line.
+    try:
+        resolved = socket.gethostbyname(target)
+    except socket.gaierror:
+        logging.error(f"Scan failed: could not resolve hostname for {target}")
+        print(f"Scan failed: could not resolve {target}. No ports were scanned.")
+        sys.exit(1)
+
+    logging.info(f"Starting scan on {target} ({resolved}) with {threads} threads...")
+
+    counts = {"open": 0, "closed": 0, "error": 0}
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
-            # Use a list comprehension to create a list of futures
-            futures = [executor.submit(scan_port, target, port, verbose) for port in ports]
+            futures = [executor.submit(scan_port, resolved, port, verbose) for port in ports]
+            for future in concurrent.futures.as_completed(futures):
+                counts[future.result()] = counts.get(future.result(), 0) + 1
 
-            # Wait for all futures to complete
-            concurrent.futures.wait(futures)
-    
     except KeyboardInterrupt:
         logging.info("Scan interrupted by user.")
         sys.exit(0)
@@ -144,9 +156,11 @@ def main():
         logging.error(f"An error occurred during the scan: {e}")
         sys.exit(1)
 
-    logging.info("Scan complete.")
+    logging.info(f"Scan complete. Open: {counts['open']}, Closed: {counts['closed']}, Errored: {counts['error']}")
+    if counts["error"] and counts["open"] == 0 and counts["closed"] == 0:
+        logging.error("Scan failed: every port scan errored, so no result can be reported.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    import re
     main()
