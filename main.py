@@ -47,9 +47,8 @@ def is_valid_hostname(hostname):
     """
     Checks if the provided string is a valid hostname.  A very basic check.  More rigorous checks exist.
     """
-    if len(hostname) > 255:
+    if not hostname or len(hostname) > 255:
         return False
-    # An empty target would raise IndexError on this line instead of returning False. The command line requires an argument, so only a caller importing this function can reach that, but the check bills itself as a validator and a validator should not crash on the input it exists to reject.
     if hostname[-1] == ".":
         hostname = hostname[:-1] # strip exactly one dot from the right, if present
     allowed = re.compile(r"(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
@@ -153,8 +152,8 @@ def main():
         with concurrent.futures.ThreadPoolExecutor(max_workers=threads) as executor:
             futures = [executor.submit(scan_port, resolved, port, verbose) for port in ports]
             for future in concurrent.futures.as_completed(futures):
-                # result() is called twice for every future in this line. It returns the same value both times, so the count is right, but the shape invites a future edit where the two calls disagree, and a plain local variable would remove the question.
-                counts[future.result()] = counts.get(future.result(), 0) + 1
+                result = future.result()
+                counts[result] = counts.get(result, 0) + 1
 
     except KeyboardInterrupt:
         logging.info("Scan interrupted by user.")
